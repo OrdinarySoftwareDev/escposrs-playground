@@ -1,5 +1,5 @@
 #![allow(dead_code)]
-use std::fmt;
+use std::{fmt, option};
 //use std::from;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -16,12 +16,12 @@ use anyhow::Result;
 use simple_logger::SimpleLogger;
 use log::LevelFilter;
 
-const CURRENCY: &'static str = "zl";
+const CURRENCY: &'static str = "$";
 
-fn center_string(s: String, width: usize) {
+fn center_string(s: String, width: usize) -> String {
     let length = s.chars().count() as usize;
     let pad = (width - length) as f32 / 2.0f32;
-    format!("{}{}{}", " ".repeat(pad.floor() as usize), s, " ".repeat(pad.ceil() as usize));
+    format!("{}{}{}", " ".repeat(pad.floor() as usize), s, " ".repeat(pad.ceil() as usize))
 }
 
 // rounding mode enum
@@ -48,7 +48,7 @@ struct ReceiptOptions {
     show_single_item_quantity: bool,
     currency_symbol: &'static str,
     logo_path: Option<String>,
-    logo_bitimageoption: BitImageOption,
+    //logo_bitimageoption: BitImageOption,
     barcode: Option<Barcode>
 }
 
@@ -63,7 +63,7 @@ impl Default for ReceiptOptions {
             show_single_item_quantity: true,
             currency_symbol: CURRENCY,
             logo_path: None,
-            logo_bitimageoption: BitImageOption::default(),
+            //logo_bitimageoption: BitImageOption::default(),
             barcode: None
         }
     }
@@ -83,10 +83,10 @@ struct Receipt<'a> {
     business_name: &'a str,
     address: &'a str,
     contact_info: &'a str,
-    items: Vec<Item<'a>>,
-    tax_percent: u8,
+    items: Vec<Item<>>,
+    tax_percent: u32,
     footer: &'a str,
-    options: &'a ReceiptOptions
+    options: ReceiptOptions
 }
 
 impl Receipt<'_> {
@@ -97,9 +97,11 @@ impl Receipt<'_> {
 
         // first some basic info
         printer
-        .justify(JustifyMode::CENTER)?;
+            .justify(JustifyMode::CENTER)?
+            .bold(true)?;
+
         if let Some(logo_path) = &self.options.logo_path {
-            if let Err(e) = printer.bit_image_option(&logo_path, self.options.logo_bitimageoption) {
+            if let Err(e) = printer.bit_image_option(&logo_path, BitImageOption::new(Some(384), Some(120), BitImageSize::Normal)?) {
                 eprintln!("Failed to print logo: {:?}", e);
             }
         }
@@ -108,36 +110,95 @@ impl Receipt<'_> {
             .write(self.business_name)?
             .write(self.address)?
             .write(self.contact_info)?
-            .draw_line(default_line)?;
+            .bold(false)?
+            .draw_line(default_line.clone())?;
 
         // now the items
+        let mut total = 0;
 
-        for _ in &self.items {
-            println!("");
+        for item in &self.items {
+            printer.writeln(&item.format(&self.options))?;
+            total += &item.price;
         }
 
+        let tax_cents = total * self.tax_percent;
+        let tax = tax_cents / 100; // still in cents
+        total += tax;
+
+        let total_item = Item {
+            name: String::from("Total"),
+            price: total,
+            quantity: None,
+            quantity_grams: None
+        };
+
+        let tax_item = Item {
+            name: format!("Tax ({:.2}%)", self.tax_percent),
+            price: tax,
+            quantity: None,
+            quantity_grams: None
+        };
+
+        printer
+            .draw_line(default_line.clone())?
+            .bold(true)?
+            .writeln(&tax_item.format(&self.options))?
+            .writeln(&total_item.format(&self.options))?
+            .bold(false)?;
+
+        if let Some(barcode) = &self.options.barcode {
+            printer.itf_option(&barcode.data, barcode.option.clone())?;
+        }
+
+        printer.writeln(self.footer)?;
         Ok(())
     }
 }
 
-/*impl fmt::Display for Receipt<'_> {
+impl fmt::Display for Receipt<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for line in [
+            self.options.logo_path
+                .as_ref()
+                .map(|_| "[Logo]")
+                .unwrap_or(""),
+            self.business_name,
+            self.address,
+            self.contact_info,
+            &"-".repeat(self.options.width as usize) // line
+        ] {
+            writeln!(f, "{}", center_string(line.to_string(), self.options.width as usize))?;
+        }
 
-        writeln!(self.business_name);
+        for item in &self.items {
+            writeln!(f, "{}", item.format(&self.options))?;
+        }
+
+        for line in [
+            &"-".repeat(self.options.width as usize), // line
+            &self.options.barcode
+                .as_ref()
+                .map(|_| "|".repeat(self.options.width as usize))
+                .unwrap_or(String::new()),
+            self.footer
+        ] {
+            writeln!(f, "{}", center_string(line.to_string(), self.options.width as usize))?;
+        }
+        Ok(())
     }
-}*/
+}
 
 // item struct
-struct Item<'a> {
+struct Item {
     name: String,
     price: u32, // in cents
     quantity: Option<u32>,
     quantity_grams: Option<u32>,
-    options: &'a ReceiptOptions
+    //options: &'a ReceiptOptions
 }
 
-impl Item<'_> {
-    fn format_price(&self, round_price: &mut bool) -> String {
+impl Item {
+    fn format_price(&self, options: &ReceiptOptions, round_price: &mut bool) -> String {
         let mut precision: usize = 2;
 
         if *round_price && self.price % 100 == 0 {
@@ -146,15 +207,15 @@ impl Item<'_> {
 
         let price_string: String = format!("{:.1$}", self.price as f64 / 100.0, precision);
 
-        if self.options.left_leaning_price {
-            format!("{}{}", price_string, self.options.currency_symbol)
+        if options.left_leaning_price {
+            format!("{}{}", price_string, options.currency_symbol)
         } else {
-            format!("{}{}", self.options.currency_symbol, price_string)
+            format!("{}{}", options.currency_symbol, price_string)
         }
     }
 
-    fn max_name_length(&self, price: &String, quantity_string: &String) -> u8 {
-        self.options.width
+    fn max_name_length(&self, options: &ReceiptOptions, price: &String, quantity_string: &String) -> u8 {
+        options.width
             - price.chars().count() as u8
             - quantity_string.chars().count() as u8
     }
@@ -167,11 +228,11 @@ impl Item<'_> {
         name
     }
 
-    fn format(&self) -> String { // formatter for the 'Item' struct, fits an item into the max width of the printer
-        let mut round_price = matches!(self.options.rounding, RoundingMode::Always);
-        let mut price = self.format_price(&mut round_price);
+    fn format(&self, options: &ReceiptOptions) -> String { // formatter for the 'Item' struct, fits an item into the max width of the printer
+        let mut round_price = matches!(options.rounding, RoundingMode::Always);
+        let mut price = self.format_price(options, &mut round_price);
 
-        let show_single = self.options.show_single_item_quantity;
+        let show_single = options.show_single_item_quantity;
         let quantity_string: String = match (self.quantity_grams, self.quantity.filter(|&q| show_single || q != 1)) {
             (Some(grams), _) => format!(" {grams}g "),
             (None, Some(q)) => format!(" {q} "),
@@ -182,20 +243,20 @@ impl Item<'_> {
         let initial_name_length = name.chars().count() as u8;
 
         // first check if everything fits
-        let mut max_name_length = self.max_name_length(&price, &quantity_string);
+        let mut max_name_length = self.max_name_length(options, &price, &quantity_string);
 
         // if the name is too long, we haven't tried rounding the price yet, and we can round at all
-        if initial_name_length > max_name_length && !round_price && !matches!(self.options.rounding, RoundingMode::Never) {
+        if initial_name_length > max_name_length && !round_price && !matches!(options.rounding, RoundingMode::Never) {
             round_price = true;
-            price = self.format_price(&mut round_price);
+            price = self.format_price(options, &mut round_price);
 
             // check again
-            max_name_length = self.max_name_length(&price, &quantity_string);
+            max_name_length = self.max_name_length(options, &price, &quantity_string);
         }
 
         // if the name is still too long, shorten
         if name.chars().count() as u8 > max_name_length {
-            name = match self.options.item_name_shortening { // shortening always makes the name fit perfectly
+            name = match options.item_name_shortening { // shortening always makes the name fit perfectly
                 ItemNameShorteningMode::Trim => name.chars().take(max_name_length as usize).collect(),
                 ItemNameShorteningMode::TrimDot => {
                     let mut s: String = name.chars().take(max_name_length as usize - 1).collect();
@@ -210,12 +271,12 @@ impl Item<'_> {
         }
         /*loop {
             price = self.format_price(&mut round_price);
-            name_segment_size = self.options.width
+            name_segment_size = options.width
                 - price.chars().count() as u8
                 - quantity_string.chars().count() as u8;
 
             if initial_name_length > name_segment_size { // name is too long
-                if !(matches!(self.options.round_price, RoundingMode::Never)) && !round_price{
+                if !(matches!(options.round_price, RoundingMode::Never)) && !round_price{
                     // if we can round (and haven't already), try
                     round_price = true;
                 } else {
@@ -232,14 +293,19 @@ impl Item<'_> {
     }
 }
 
-// struct for multiple items
-struct Items {
-
-}
-
 fn main() -> Result<()> { // print a receipt
+    let default_barcode_option = BarcodeOption::new(
+        BarcodeWidth::default(),
+        BarcodeHeight::XS,
+        BarcodeFont::default(),
+        BarcodePosition::None
+    );
+
     let receipt_options = ReceiptOptions {
         item_name_shortening: ItemNameShorteningMode::TrimDot,
+        logo_path: Some("/media/user/MISC/Documents/Coding/Rust/thermal-printer-rust/assets/rust.png".to_string()),
+        left_leaning_price: false,
+        barcode: Some(Barcode::new(BarcodeSystem::ITF, "1234567890", default_barcode_option)?),
         ..Default::default()
     };
 
@@ -248,29 +314,33 @@ fn main() -> Result<()> { // print a receipt
 
     let mut printer = Printer::new(driver, Protocol::default(), Some(PrinterOptions::default()));
 
+    let items = vec![
+        Item { name: "Qwertyuiopasdfghjklzxcvbnm".to_string(), price: 9999, quantity: Some(1), quantity_grams: None },
+        Item { name: "Fortnite Card".to_string(), price: 1900, quantity: Some(1), quantity_grams: None },
+        Item { name: "Deltarune 67".to_string(), price: 6700, quantity: Some(1), quantity_grams: None },
+        Item { name: "Uranium-238".to_string(), price: 213700, quantity: None, quantity_grams: Some(100) },
+        Item { name: "doohickey".to_string(), price: 1000, quantity: Some(20), quantity_grams: None },
+    ];
+
+    let receipt = Receipt {
+        business_name: "Home Inc.\n",
+        address: "1 Grove Street, San Andreas\n",
+        contact_info: "343-6629-2525\n",
+        items: items,
+        tax_percent: 12,
+        footer: "Thank you for shopping!",
+        options: receipt_options
+    };
+
+    print!("{}", &receipt);
+
     printer
         .debug_mode(Some(DebugMode::Hex))
         .init()?;
 
-    let items = vec![
-        Item { name: "Konstantynopolitanczykowianeczka".to_string(), price: 2500000, quantity: Some(1), quantity_grams: None, options: &receipt_options},
-        Item { name: "Karta PaySafeCard 50".to_string(), price: 5000, quantity: Some(1), quantity_grams: None, options: &receipt_options},
-        Item { name: "Rupurix 10".to_string(), price: 1600, quantity: Some(2), quantity_grams: None, options: &receipt_options},
-        Item { name: "Kremowka".to_string(), price: 2137, quantity: None, quantity_grams: Some(670), options: &receipt_options},
-        Item { name: "Dlugopis".to_string(), price: 1205, quantity: Some(20), quantity_grams: None, options: &receipt_options},
-    ];
+    receipt.write(&mut printer)?;
 
-    let receipt = Receipt {
-        business_name: &"",
-        address: &"",
-        contact_info: &"",
-        items: items,
-        tax_percent: 23,
-        footer: &"",
-        options: &receipt_options
-    };
-
-    //print!("{}", receipt);
+    printer.print_cut()?;
     Ok(())
 }
 
@@ -412,7 +482,7 @@ fn all_barcodes_test(printer: &mut Printer<FileDriver>) -> Result<()> {
     .upce("01234565")? // doesn't work
     .itf_option("30712345000010", default_opt.clone())? //  does work
     .pdf417("Hello World!")? //  doesn't work
-    .code39_option("CODE39-123", default_opt.clone())?
+    .code39_option("CODE39-123", default_opt.clone())? // wide error!
     .codabar_option("A1234B", default_opt.clone())?
     .maxi_code_option("MAXICODE123", MaxiCodeMode::default())? //  doesn't work
     .gs1_databar_2d("123456780123")? // needs valid data (whatever that is)
