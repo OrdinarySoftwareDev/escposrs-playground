@@ -1,4 +1,4 @@
-Some observations for this aliexpress printer:
+Some observations for my AliExpress 58mm printer:
 
 **It works with the xp58.ppd driver as well as ESC/POS**
 **It shows up as "gxmc micro-printer "**
