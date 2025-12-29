@@ -271,25 +271,6 @@ impl Item {
             // fill the rest of the string with whitespace
             name = self.pad_name(max_name_length as usize)
         }
-        /*loop {
-            price = self.format_price(&mut round_price);
-            name_segment_size = options.width
-                - price.chars().count() as u8
-                - quantity_string.chars().count() as u8;
-
-            if initial_name_length > name_segment_size { // name is too long
-                if !(matches!(options.round_price, RoundingMode::Never)) && !round_price{
-                    // if we can round (and haven't already), try
-                    round_price = true;
-                } else {
-                    // in any other case just shorten
-                    name = self.shorten_name();
-                    break;
-                }
-            } else {
-                break;
-            }
-        }*/
 
         format!("{name}{quantity_string}{price}")
     }
