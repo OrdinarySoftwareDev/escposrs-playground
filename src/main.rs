@@ -93,6 +93,7 @@ impl Receipt<'_> {
     fn write(&self, printer: &mut Printer<FileDriver>) -> Result<()> {
         let default_line = LineBuilder::new()
             .width(self.options.width)
+            .style(escpos::ui::line::LineStyle::Simple)
             .build();
 
         // first some basic info
@@ -144,6 +145,7 @@ impl Receipt<'_> {
             .bold(true)?
             .writeln(&tax_item.format(&self.options))?
             .writeln(&total_item.format(&self.options))?
+            .feed()?
             .bold(false)?;
 
         if let Some(barcode) = &self.options.barcode {
@@ -294,6 +296,11 @@ impl Item {
 }
 
 fn main() -> Result<()> { // print a receipt
+    let printer_path = Path::new("/dev/usb/lp2");
+    let driver = FileDriver::open(printer_path)?;
+
+    let mut printer = Printer::new(driver, Protocol::default(), Some(PrinterOptions::default()));
+
     let default_barcode_option = BarcodeOption::new(
         BarcodeWidth::default(),
         BarcodeHeight::XS,
@@ -309,21 +316,18 @@ fn main() -> Result<()> { // print a receipt
         ..Default::default()
     };
 
-    let printer_path = Path::new("/dev/usb/lp2");
-    let driver = FileDriver::open(printer_path)?;
-
-    let mut printer = Printer::new(driver, Protocol::default(), Some(PrinterOptions::default()));
-
     let items = vec![
+        Item { name: "Uranium-238".to_string(), price: 213700, quantity: None, quantity_grams: Some(100) },
+        Item { name: "AK-47 Assault Rifle".to_string(), price: 100000, quantity: Some(1), quantity_grams: None },
         Item { name: "Qwertyuiopasdfghjklzxcvbnm".to_string(), price: 9999, quantity: Some(1), quantity_grams: None },
         Item { name: "Fortnite Card".to_string(), price: 1900, quantity: Some(1), quantity_grams: None },
         Item { name: "Deltarune 67".to_string(), price: 6700, quantity: Some(1), quantity_grams: None },
-        Item { name: "Uranium-238".to_string(), price: 213700, quantity: None, quantity_grams: Some(100) },
-        Item { name: "doohickey".to_string(), price: 1000, quantity: Some(20), quantity_grams: None },
+        Item { name: "doohickey".to_string(), price: 1000, quantity: None, quantity_grams: Some(1) },
+
     ];
 
     let receipt = Receipt {
-        business_name: "Home Inc.\n",
+        business_name: "HOME INC.\n",
         address: "1 Grove Street, San Andreas\n",
         contact_info: "343-6629-2525\n",
         items: items,
