@@ -18,10 +18,75 @@ use log::LevelFilter;
 
 const CURRENCY: &'static str = "$";
 
+// UNTESTED, WORK IN PROGRESS CODE!
+
 fn center_string(s: String, width: usize) -> String {
     let length = s.chars().count() as usize;
     let pad = (width - length) as f32 / 2.0f32;
     format!("{}{}{}", " ".repeat(pad.floor() as usize), s, " ".repeat(pad.ceil() as usize))
+}
+
+fn smart_trim(s: &str, max_length: usize, dot: bool) -> String {
+    let s = String::from(s);
+    let s_length = s.chars().count();
+
+    if s_length <= max_length {
+        return s;
+    }
+
+    let parts: Vec<&str> = s.split_whitespace().collect();
+    let parts_count = parts.len();
+
+    if max_length <= parts_count || max_length <= 0 {
+        panic!("what are you doing");
+    }
+
+    let whitespaces = parts_count - 1;
+
+    let mut trimmable_pair_count = 0;
+    let mut trimmable_text_length = 0;
+    
+    let mut trimmable: Vec<&str> = vec![];
+
+    for part in &parts {
+        let chars = part.chars().count();
+        if chars > 3 {
+            trimmable_pair_count += 1;
+            trimmable_text_length += chars;
+            trimmable.push(&part);
+        }
+    }
+
+    let overflow = s_length - max_length;
+    
+    let mut trimmed = String::new();
+
+    for (i, part) in parts.iter().enumerate() {
+        let do_trim = trimmable.contains(&part);
+
+        if do_trim {
+            let part_length = part.chars().count();
+            let mut trim = ((trimmable_pair_count - 1) * part_length) as f32 / (trimmable_text_length - part_length) as f32;
+            trim *= (overflow / trimmable_pair_count) as f32;
+            let new_length = (part_length as f32 - trim).round() as usize;
+
+            trimmed.push_str(&part[..new_length]);
+
+            if dot {
+                trimmed.pop();
+                trimmed.push('.');
+            }
+        } else {
+            trimmed.push_str(&part);
+        }
+
+        // add whitespace back
+        if !(i == whitespaces) {
+            trimmed.push(' ');
+        }
+    }
+    trimmed.truncate(max_length); // failsafe
+    trimmed
 }
 
 // rounding mode enum
@@ -35,7 +100,17 @@ enum RoundingMode {
 enum ItemNameShorteningMode {
     Trim, // trim the name
     TrimDot, // trim the name but replace last character with dot
-    SymmetricalDot // shorten all words equally if possible (most human-readable)
+    SmartTrim, // shorten all words (weighted, most human-readable)
+    SmartTrimDot // shorten all words but replace the last character of words with '.' (not recommended)
+}
+
+// row format mode enum
+// used to dictate how rows of items should be formatted
+enum RowFormatMode {
+    Uneven, // Item names will take as much space up as possible,
+    UnevenSorted, // Like above, but items are sorted by quantity string length highest to lowest (more visually appealing than 'Uneven')
+    Even, // Every column (Item name, Quantity, Price) is of a constant size (most visually appealing, but sacrifices max name length),
+    WrapAround // Item names will wrap around, taking up multiple lines.
 }
 
 // receipt options struct
@@ -157,7 +232,7 @@ impl Receipt<'_> {
     }
 }
 
-impl fmt::Display for Receipt<'_> {
+impl fmt::Display for Receipt<'_> { // finish this
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for line in [
             self.options.logo_path
@@ -229,8 +304,8 @@ impl Item {
         }
         name
     }
-
-    fn format(&self, options: &ReceiptOptions) -> String { // formatter for the 'Item' struct, fits an item into the max width of the printer
+    
+    fn eval(&self, options: &ReceiptOptions) -> [&str; 3] { // returns an array of 3 strings: Item name, quantity, price
         let mut round_price = matches!(options.rounding, RoundingMode::Always);
         let mut price = self.format_price(options, &mut round_price);
 
@@ -264,15 +339,20 @@ impl Item {
                     let mut s: String = name.chars().take(max_name_length as usize - 1).collect();
                     s.push('.');
                     s
-                }
-                ItemNameShorteningMode::SymmetricalDot => String::from("") // work in progress
+                },
+                ItemNameShorteningMode::SmartTrim => smart_trim(&name, max_name_length as usize, false),
+                ItemNameShorteningMode::SmartTrimDot => smart_trim(&name, max_name_length as usize, true) 
             }
         } else {
             // fill the rest of the string with whitespace
             name = self.pad_name(max_name_length as usize)
         }
 
-        format!("{name}{quantity_string}{price}")
+        [&name, &quantity_string, &price]
+    }
+
+    fn format(&self) {
+        self.eval()
     }
 }
 
